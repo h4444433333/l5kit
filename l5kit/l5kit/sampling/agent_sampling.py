@@ -7,6 +7,7 @@ from ..data import (
     filter_tl_faces_by_frames,
     get_agents_slice_from_frames,
     get_tl_faces_slice_from_frames,
+    PERCEPTION_LABEL_TO_INDEX,
 )
 from ..data.filter import filter_agents_by_frames, filter_agents_by_track_id
 from ..geometry import angular_distance, compute_agent_pose, rotation33_as_yaw, transform_point
@@ -128,12 +129,12 @@ to train models that can recover from slight divergence from training set data
     agent_from_world = np.linalg.inv(world_from_agent)
     raster_from_world = render_context.raster_from_world(agent_centroid_m, agent_yaw_rad)
 
-    future_positions_m, future_yaws_rad, future_availabilities = _create_targets_for_deep_prediction(
+    future_positions_m, future_yaws_rad, future_availabilities, _ = _create_targets_for_deep_prediction(
         future_num_frames, future_frames, selected_track_id, future_agents, agent_from_world, agent_yaw_rad,
     )
 
     # history_num_frames + 1 because it also includes the current frame
-    history_positions_m, history_yaws_rad, history_availabilities = _create_targets_for_deep_prediction(
+    history_positions_m, history_yaws_rad, history_availabilities, _ = _create_targets_for_deep_prediction(
         history_num_frames + 1, history_frames, selected_track_id, history_agents, agent_from_world, agent_yaw_rad,
     )
 
@@ -196,13 +197,15 @@ def _create_targets_for_deep_prediction(
         current_agent_yaw (float): angle of the agent at timestep 0
 
     Returns:
-        Tuple[np.ndarray, np.ndarray, np.ndarray]: position offsets, angle offsets, availabilities
+        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: position offsets, angle offsets, availabilities, agent_type
 
     """
     # How much the coordinates differ from the current state in meters.
     positions_m = np.zeros((num_frames, 2), dtype=np.float32)
     yaws_rad = np.zeros((num_frames, 1), dtype=np.float32)
     availabilities = np.zeros((num_frames,), dtype=np.float32)
+    agent_type = np.zeros(1, dtype=np.float32)
+    agent_type = PERCEPTION_LABEL_TO_INDEX["PERCEPTION_LABEL_NOT_SET"]
 
     for i, (frame, frame_agents) in enumerate(zip(frames, agents)):
         if selected_track_id is None:
@@ -214,6 +217,8 @@ def _create_targets_for_deep_prediction(
                 agent = filter_agents_by_track_id(frame_agents, selected_track_id)[0]
                 agent_centroid_m = agent["centroid"]
                 agent_yaw_rad = agent["yaw"]
+                if i == 0:
+                    agent_type = np.argmax(agent["label_probabilities"])
             except IndexError:
                 availabilities[i] = 0.0  # keep track of invalid futures/history
                 continue
@@ -221,4 +226,4 @@ def _create_targets_for_deep_prediction(
         positions_m[i] = transform_point(agent_centroid_m, agent_from_world)
         yaws_rad[i] = angular_distance(agent_yaw_rad, current_agent_yaw)
         availabilities[i] = 1.0
-    return positions_m, yaws_rad, availabilities
+    return positions_m, yaws_rad, availabilities, agent_type
